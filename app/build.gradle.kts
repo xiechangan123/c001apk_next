@@ -166,23 +166,28 @@ android {
         dataBinding = true
         buildConfig = true
     }
-    defaultConfig {
-        ndk {
-            abiFilters.add("arm64-v8a")
-            abiFilters.add("armeabi-v7a")
-//            abiFilters.add("armeabi")
-//            abiFilters.add("x86")
-            abiFilters.add("x86_64")
+    // 按 ABI 拆成独立 APK
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64","x86")
+            // 不需要混合包就 false；想保留一个全能包就 true
+            isUniversalApk = false
         }
     }
     ksp {
         arg("room.schemaLocation", "$projectDir/schemas")
     }
+    // 文件名带上 ABI，避免互相覆盖
     applicationVariants.configureEach {
-        // APK 文件名与 versionName 严格一致：c001apk_next-V1.0.1-release(10000).apk
-        val apkFileName = "$versionName($versionCode)"
+        val ver = versionName   // 例如 c001apk_next-V1.0.2-release
+        val code = versionCode
         outputs.configureEach {
-            (this as? ApkVariantOutputImpl)?.outputFileName = "$apkFileName.apk"
+            val out = this as? ApkVariantOutputImpl ?: return@configureEach
+            val abi = out.filters.find { it.filterType == "ABI" }?.identifier
+                ?: "universal"
+            out.outputFileName = "$ver-$abi($code).apk"
         }
     }
 }
