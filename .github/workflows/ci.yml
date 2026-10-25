@@ -53,7 +53,6 @@ jobs:
           else
             echo "::waning::未配置 SIGN_KEYSTORE_BASE64，release 将退回 debug 签名（仅供测试，不可作为正式版分发）"
           fi
-
       # 注意：不要钉死补丁号（如 v4.0.2），GitHub 会把废弃的旧版本直接判失败
       - name: Cache Gradle Dependencies
         uses: actions/cache@v4
@@ -65,7 +64,6 @@ jobs:
           key: gradle-deps-core-${{ hashFiles('**/build.gradle.kts', '**/build.gradle', '**/libs.versions.toml') }}
           restore-keys: |
             gradle-deps
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -79,7 +77,6 @@ jobs:
           esac
           echo "channel=$C" >> $GITHUB_OUTPUT
           echo "本次构建渠道：$C"
-
       # 版本号真源是 main 的 version.properties：main 每次发布都把号 +1 后写回，所以它
       # 永远等于「线上已发布的最高号」。这里把要用的号解出来直接写进工作区的
       # version.properties —— 两个变体（assembleRelease 与 assembleDebug）都读这个文件；
@@ -95,7 +92,6 @@ jobs:
           # 不剥掉行尾的 \r，$(( )) 会直接报 "integer expression expected"
           LOCAL_NAME=$(grep -m1 '^VERSION_NAME=' version.properties | cut -d= -f2- | tr -d '\r')
           LOCAL_CODE=$(grep -m1 '^VERSION_CODE=' version.properties | cut -d= -f2- | tr -d '\r')
-
           # 同仓库 main 分支的号（checkout 用 fetch-depth: 0，一般已在本地 refs 里）
           if ! git show origin/main:version.properties > /tmp/main-version.properties 2>/dev/null; then
             git fetch origin main --depth=1
@@ -103,7 +99,6 @@ jobs:
           fi
           MAIN_NAME=$(grep -m1 '^VERSION_NAME=' /tmp/main-version.properties | cut -d= -f2- | tr -d '\r')
           MAIN_CODE=$(grep -m1 '^VERSION_CODE=' /tmp/main-version.properties | cut -d= -f2- | tr -d '\r')
-
           # 两个来源取号大的那份（正常是 main 更大；本分支被手工调高过就尊重本地）
           if [ "${MAIN_CODE:-0}" -gt "${LOCAL_CODE:-0}" ]; then
             BASE_NAME=$MAIN_NAME; BASE_CODE=$MAIN_CODE
@@ -111,7 +106,6 @@ jobs:
             BASE_NAME=$LOCAL_NAME; BASE_CODE=$LOCAL_CODE
           fi
           echo "版本号来源：main=${MAIN_NAME}(${MAIN_CODE}) 本分支=${LOCAL_NAME}(${LOCAL_CODE}) → 基线 ${BASE_NAME}(${BASE_CODE})"
-
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             BASE=${BASE_NAME#V}
             NAME="V${BASE%.*}.$(( ${BASE##*.} + 1 ))"
@@ -122,22 +116,20 @@ jobs:
             CODE=$BASE_CODE
             echo "::notice::测试线：沿用线上最高号 ${NAME}（${CODE}），不涨号、不写回"
           fi
-
           sed -i "s/^VERSION_NAME=.*/VERSION_NAME=${NAME}/" version.properties
           sed -i "s/^VERSION_CODE=.*/VERSION_CODE=${CODE}/" version.properties
           grep -E '^VERSION_(NAME|CODE)=' version.properties
           echo "name=${NAME}" >> $GITHUB_OUTPUT
           echo "code=${CODE}" >> $GITHUB_OUTPUT
-
       - name: Build release
         id: buildRelease
         run: |
           set -o pipefail
-          # 本次要用的版本号已由 Resolve version 写进 version.properties，
-          # Gradle 直接读文件即可（assembleDebug 也是这样拿到同一个号）
           ./gradlew :app:assembleRelease -Pchannel=${{ steps.channel.outputs.channel }} --stacktrace 2>&1 | tee gradle-release.log
-          echo "releaseName=$(ls app/build/outputs/apk/release/*.apk | awk -F '(/|\\.apk)' '{print $6}')" >> $GITHUB_OUTPUT
-
+          ls -la app/build/outputs/apk/release/ || true
+          # 多 ABI 时不要用 ls 拼 releaseName（会多行，GITHUB_OUTPUT 非法）
+          # 直接用 Resolve version 已算好的版本号
+          echo "releaseName=${{ steps.ver.outputs.name }}-${{ steps.ver.outputs.code }}" >> $GITHUB_OUTPUT
       - name: Upload release
         if: success()
         uses: actions/upload-artifact@v4
@@ -161,7 +153,6 @@ jobs:
           else
             echo "::waning::未找到 apksigner，跳过签名校验"
           fi
-
       - name: Upload mappings
         if: success()
         uses: actions/upload-artifact@v4
@@ -174,8 +165,8 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew :app:assembleDebug 2>&1 | tee gradle-debug.log
-          echo "debugName=$(ls app/build/outputs/apk/debug/*.apk | awk -F '(/|\\.apk)' '{print $6}')" >> $GITHUB_OUTPUT
-
+          ls -la app/build/outputs/apk/debug/ || true
+          echo "debugName=${{ steps.ver.outputs.name }}-${{ steps.ver.outputs.code }}" >> $GITHUB_OUTPUT
       - name: Upload debug
         if: success()
         uses: actions/upload-artifact@v4
@@ -197,7 +188,6 @@ jobs:
             main) TAG=release-latest; TITLE="正式版（main 自动构建）"; PRE=() ;;
             *)    TAG=debug-latest;   TITLE="测试版（debug 自动构建）"; PRE=(--prerelease) ;;
           esac
-
           # 只发布正式签名的发行包。debug 构建出的包与它同名（都叫 xxx-debug(版本号).apk），
           # 而 GitHub 会把文件名里的 ( ) 规范化成 .，两个包放同一位置会撞名（422 already_exists），
           # 所以 debug 包继续在 Actions 的 artifact 里下载。
@@ -206,7 +196,6 @@ jobs:
             if [ -f "$f" ]; then FILES+=("$f"); fi
           done
           echo "本次发布产物：${FILES[*]}"
-
           # 本次用的号由 Resolve version 决定（main 是 +1 后的号，其它分支是 main 的基线），
           # 它已经写进 version.properties，正常直接取 outputs
           VERSION="${{ steps.ver.outputs.name }}"
@@ -226,7 +215,6 @@ jobs:
             echo "| 提交 | ${GITHUB_SHA} |"
             echo "| 构建时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |"
           } > "$NOTES"
-
           # 追加仓库内维护的功能清单（.github/release-notes.md），
           # 让发行版页面始终带一份完整的功能说明，而不是只有自动构建信息
           if [ -f .github/release-notes.md ]; then
@@ -237,19 +225,16 @@ jobs:
               cat .github/release-notes.md
             } >> "$NOTES"
           fi
-
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES" "${PRE[@]}"
           else
             gh release create "$TAG" --title "$TITLE" --notes-file "$NOTES" \
               --target "$GITHUB_REF_NAME" "${PRE[@]}"
           fi
-
           # 每个位置只留最新一份：上传前先清空上一次的产物（版本号变化后文件名也不同）
           gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r n; do
             if [ -n "$n" ]; then gh release delete-asset "$TAG" "$n" --yes; fi
           done
-
           # release 刚建出来时立刻上传会偶发 404（服务端还没就绪），失败就退避重试
           ok=0
           for i in 1 2 3 4 5; do
@@ -261,7 +246,6 @@ jobs:
             echo "::error::发布 ${TAG} 失败，产物未上传"
             exit 1
           fi
-
           # 把本次发行版的位置写进 run summary 和 annotation，方便直接拿链接。
           # asset 名由 GitHub 规范化（文件名里的 ( ) 会变成 .），所以链接以服务端返回的名字为准
           export BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
@@ -272,7 +256,6 @@ jobs:
             gh release view "$TAG" --json assets --jq '.assets[] | "  - \(env.BASE)/\(.name)"'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::${TITLE} → https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
-
       # 正式版：把本次用掉的版本号提交到 main，作为下一次 +1 的基线。
       # 工作区里的 version.properties 在 Resolve version 已经改成新号了，这里只是把它提交掉。
       # GITHUB_TOKEN 的推送本身不会再触发 workflow，再加 [skip ci] 双保险。
@@ -292,7 +275,6 @@ jobs:
               commit -m "chore(release): ${{ steps.ver.outputs.name }}（versionCode ${{ steps.ver.outputs.code }}）[skip ci]"
           git push origin HEAD:main
           echo "::notice::已把 ${{ steps.ver.outputs.name }}（${{ steps.ver.outputs.code }}）写回 main，下次发布在此基础上 +1"
-
       # 正式版自动打版本 tag（如 V1.0.5），指向本次发布用的提交。
       # 以前每次发版都要手工补一个 V1.0.x，容易忘、也容易指错提交；这里自动化。
       # 只打在 main 上：debug 与 main 同号（版本号是共用的），打 tag 会撞名。
@@ -330,7 +312,6 @@ jobs:
           正式版 APK 在 [release-latest](https://github.com/${GITHUB_REPOSITORY}/releases/tag/release-latest)；此处作为该版本的固定 tag / 归档入口。" \
               2>/dev/null || echo "::warning::Release ${TAG} 创建失败（可能被分支保护或权限限制），tag 已建好，不影响发布"
           fi
-
           # 把本次正式包也归档到这个版本 Release 上，与历史上手工建的 V1.0.3 / V1.0.4 形态一致。
           # ⚠️ 必须放在这里而不是 Publish 步骤里：Release 是本步骤刚创建的，
           #    放在 Publish 会让 gh release view 查不到、静默跳过（V1.0.5 首轮就这么空了一次）。
@@ -348,7 +329,6 @@ jobs:
           else
             echo "::warning::没找到 release APK 或 Release 不存在，跳过归档"
           fi
-
       # 失败时把 Gradle 日志尾部转成 annotation，
       # 这样在 Actions 页面和失败通知邮件里就能直接看到原因，不用再翻完整日志
       - name: Report Gradle failure
