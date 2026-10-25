@@ -56,7 +56,7 @@ class MyApplication : Application() {
 
         // 本机签名校验：装的不是官方包（且非 debug 包）就弹窗拒绝启动。
         // 与升级接口里那套云端签名核验各写一份、互不引用，见 SignatureGuard 的注释
-        SignatureGuard.install(this)
+        // SignatureGuard.install(this)
 
         // 静默心跳上报（2026-10-25 ✓）
         //   只在前台报 ✓ 间隔由服务器 beat.json 决定 ✓
